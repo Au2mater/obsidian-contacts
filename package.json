@@ -1,6 +1,6 @@
 {
   "name": "obsidian-contact-links",
-  "version": "0.2.1",
+  "version": "1.0.0",
   "description": "Obsidian plugin: Outlook contacts as autocompleted person links",
   "main": "main.js",
   "scripts": {
