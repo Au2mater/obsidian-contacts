@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "minAppVersion": "1.11.4",
   "description": "Sync contacts from Microsoft 365 (or import CSV/vCard) and autocomplete them as links. A minimal person note is created the first time you mention someone.",
-  "author": "Ahmad",
-  "isDesktopOnly": false
+  "author": "Au2mater",
+  "isDesktopOnly": false,
+  "authorUrl": "https://github.com/Au2mater"
 }
