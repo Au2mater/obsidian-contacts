@@ -79,6 +79,7 @@ Both CSV and vCard (`.vcf`) files work. That includes English and Danish column 
 
 The contact icon in the ribbon, or the command **Contact Links: Open contacts panel**, opens a list of everyone the plugin knows in the right sidebar, with a search field that stays at the top. Each row shows where the person comes from (Microsoft, Google, File), whether they have a note, and their role, company and email.
 
+- The refresh button next to the search field syncs every signed-in account now.
 - Click someone with a note to open it (Ctrl/Cmd-click opens it in a new tab).
 - Click someone without a note to create one: you're asked to confirm first.
 - Right-click for **Open note** / **Create note…**, **Open in new tab** and **Copy email address**.

@@ -1,4 +1,4 @@
-import { App, debounce, ItemView, Keymap, Menu, Modal, Notice, PaneType, Setting, WorkspaceLeaf } from "obsidian";
+import { App, debounce, ItemView, Keymap, Menu, Modal, Notice, PaneType, setIcon, Setting, WorkspaceLeaf } from "obsidian";
 import type { Person } from "./core/types";
 import type ContactLinksPlugin from "./main";
 import { ensurePersonNote } from "./notes";
@@ -44,7 +44,28 @@ export class ContactsView extends ItemView {
 		root.addClass("contact-links-panel");
 		// Search and count stay pinned at the top while the list scrolls.
 		const header = root.createDiv({ cls: "contact-links-header" });
-		const search = header.createEl("input", { type: "search", cls: "contact-links-search", attr: { placeholder: "Search contacts…" } });
+		const bar = header.createDiv({ cls: "contact-links-bar" });
+		const search = bar.createEl("input", { type: "search", cls: "contact-links-search", attr: { placeholder: "Search contacts…" } });
+		const sync = bar.createDiv({ cls: "clickable-icon contact-links-sync", attr: { "aria-label": "Sync contacts now", role: "button", tabindex: "0" } });
+		setIcon(sync, "refresh-cw");
+		const runSync = async () => {
+			if (sync.hasClass("is-syncing")) return;
+			sync.addClass("is-syncing");
+			sync.setAttr("aria-label", "Syncing…");
+			try {
+				await this.plugin.syncNow();
+			} finally {
+				sync.removeClass("is-syncing");
+				sync.setAttr("aria-label", "Sync contacts now");
+			}
+		};
+		sync.addEventListener("click", () => void runSync());
+		sync.addEventListener("keydown", (evt) => {
+			if (evt.key === "Enter" || evt.key === " ") {
+				evt.preventDefault();
+				void runSync();
+			}
+		});
 		search.value = this.query;
 		const refresh = debounce(() => this.render(), 100, true);
 		search.addEventListener("input", () => {

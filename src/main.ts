@@ -65,14 +65,7 @@ export default class ContactLinksPlugin extends Plugin {
 		this.addCommand({
 			id: "sync-microsoft",
 			name: "Sync contacts now",
-			callback: () => {
-				if (!this.auth.signedIn && !this.google.signedIn) {
-					new Notice("Sign in to Microsoft 365 or Google first.");
-					this.openSettings();
-				} else if (!(["m365", "google"] as const).some((p) => this.isSignedIn(p) && this.syncEnabled(p))) {
-					new Notice("Syncing is turned off for every signed-in account. Turn on a source under Settings → Contact Links.");
-				} else void this.sync(true);
-			},
+			callback: () => void this.syncNow(),
 		});
 
 		// Person notes come from the metadata cache; rebuild when it is ready and when people notes change.
@@ -191,6 +184,16 @@ export default class ContactLinksPlugin extends Plugin {
 
 	isSignedIn(provider: Provider): boolean {
 		return provider === "m365" ? this.auth.signedIn : this.google.signedIn;
+	}
+
+	/** Sync every signed-in account now, as the command and the panel's button do; explain when there is nothing to sync. */
+	async syncNow(): Promise<void> {
+		if (!this.auth.signedIn && !this.google.signedIn) {
+			new Notice("Sign in to Microsoft 365 or Google first.");
+			this.openSettings();
+		} else if (!(["m365", "google"] as const).some((p) => this.isSignedIn(p) && this.syncEnabled(p))) {
+			new Notice("Syncing is turned off for every signed-in account. Turn on a source under Settings → Contact Links.");
+		} else await this.sync(true);
 	}
 
 	syncEnabled(provider: Provider): boolean {

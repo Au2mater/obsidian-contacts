@@ -58,8 +58,30 @@
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.contact-links-bar {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+}
+
 .contact-links-search {
-	width: 100%;
+	flex: 1;
+	min-width: 0;
+}
+
+.contact-links-sync.is-syncing {
+	pointer-events: none;
+	opacity: 0.6;
+}
+
+.contact-links-sync.is-syncing svg {
+	animation: contact-links-spin 1s linear infinite;
+}
+
+@keyframes contact-links-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .contact-links-count,
