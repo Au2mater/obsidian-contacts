@@ -30,6 +30,8 @@ export interface Person {
 	title?: string;
 	/** Vault path of the person note, when one exists. */
 	path?: string;
+	/** The note is outside the people folder: an existing note with the person's name. */
+	elsewhere?: boolean;
 	contact?: Contact;
 }
 

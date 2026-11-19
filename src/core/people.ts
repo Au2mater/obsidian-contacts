@@ -1,11 +1,18 @@
 import { fold, words } from "./normalize";
 import type { Contact, Person, PersonNote } from "./types";
 
-/** Merge imported contacts with person notes in the vault. A note wins on name and aliases. */
-export function mergePeople(contacts: Contact[], notes: PersonNote[]): Person[] {
+/**
+ * Merge imported contacts with person notes in the vault. A note wins on name and aliases.
+ *
+ * `elsewhere` looks up a note outside the people folder for a contact that has none there (in the
+ * plugin: the note a link to their full name would open). It is used only for full names of two or
+ * more words, a note whose email belongs to someone else is skipped, and no note is claimed twice.
+ */
+export function mergePeople(contacts: Contact[], notes: PersonNote[], elsewhere?: (name: string) => PersonNote | null): Person[] {
 	const people: Person[] = [];
 	const byEmail = new Map<string, Person>();
 	const byName = new Map<string, Person>();
+	const claimed = new Set(notes.map((n) => n.path));
 
 	for (const n of notes) {
 		const p: Person = {
@@ -41,7 +48,7 @@ export function mergePeople(contacts: Contact[], notes: PersonNote[]): Person[] 
 			}
 			continue;
 		}
-		people.push({
+		const person: Person = {
 			key: `contact:${c.id}`,
 			name: c.name,
 			aliases: c.nickname ? [c.nickname] : [],
@@ -49,7 +56,17 @@ export function mergePeople(contacts: Contact[], notes: PersonNote[]): Person[] 
 			company: c.company,
 			title: c.title,
 			contact: c,
-		});
+		};
+		const found = elsewhere && words(fold(c.name)).length >= 2 ? elsewhere(c.name) : null;
+		const mine = c.emails.map((e) => e.toLowerCase());
+		if (found && !claimed.has(found.path) && (!found.emails.length || found.emails.some((e) => mine.includes(e)))) {
+			claimed.add(found.path);
+			person.path = found.path;
+			person.elsewhere = true;
+			for (const a of found.aliases) if (!person.aliases.some((x) => fold(x) === fold(a))) person.aliases.push(a);
+			person.company ??= found.company;
+		}
+		people.push(person);
 	}
 	return people;
 }

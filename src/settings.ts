@@ -15,6 +15,8 @@ export interface ContactLinksSettings {
 	googleSyncOther: boolean;
 	/** Also merge contacts with the same full name when their emails differ. */
 	mergeSameName: boolean;
+	/** Use an existing note with a contact's full name outside the people folder as their note. */
+	findNotesElsewhere: boolean;
 	/** Hours between automatic syncs; 0 turns automatic sync off. */
 	syncHours: number;
 	peopleFolder: string;
@@ -39,6 +41,7 @@ export const DEFAULT_SETTINGS: ContactLinksSettings = {
 	googleSyncContacts: true,
 	googleSyncOther: true,
 	mergeSameName: false,
+	findNotesElsewhere: true,
 	syncHours: 12,
 	peopleFolder: "People",
 	createNotes: true,
@@ -261,6 +264,12 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 					name: "People folder",
 					desc: "Where person notes live. Notes in this folder are suggested too, with their aliases.",
 					control: { type: "folder", key: "peopleFolder", placeholder: "People" },
+				},
+				{
+					name: "Use existing notes outside the folder",
+					desc: "When a contact has no note in the people folder but a link to their full name already opens a note elsewhere, use that note instead of creating a second one. Move such notes into the folder from the contacts panel or with the command.",
+					aliases: ["existing notes", "elsewhere", "duplicates"],
+					control: { type: "toggle", key: "findNotesElsewhere" },
 				},
 				{
 					name: "Create a note on first mention",

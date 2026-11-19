@@ -1,16 +1,18 @@
 import { debounce, Notice, Plugin, TAbstractFile } from "obsidian";
 import { dedupeContacts, dropAutomated, mergedUsage } from "./core/dedupe";
 import { mergeContacts, parseContacts } from "./core/importers";
+import { fold, safeFileName, words } from "./core/normalize";
 import { mergePeople, PeopleIndex } from "./core/people";
 import { migrate, PluginData, Provider } from "./core/pluginData";
-import type { Contact } from "./core/types";
+import type { Contact, Person } from "./core/types";
 import { GoogleAuth } from "./google/auth";
 import { fetchFromGoogle } from "./google/people";
 import { GoogleSignInModal } from "./google/signin";
 import { MicrosoftAuth, NotSignedInError } from "./m365/auth";
 import { fetchFromMicrosoft } from "./m365/graph";
 import { SignInModal } from "./m365/signin";
-import { readPersonNotes } from "./notes";
+import { ConfirmModal } from "./confirm";
+import { addContactDetails, findNoteElsewhere, moveToPeopleFolder, readPersonNotes } from "./notes";
 import { ContactLinksSettings, ContactLinksSettingTab, DEFAULT_SETTINGS } from "./settings";
 import { ContactsView, VIEW_TYPE_CONTACTS } from "./panel";
 import { PeopleSuggest } from "./suggest";
@@ -36,6 +38,9 @@ export default class ContactLinksPlugin extends Plugin {
 	private generation: Record<Provider, number> = { m365: 0, google: 0 };
 	/** Contacts left after dropping automated addresses, before merging duplicates. */
 	beforeMerge = 0;
+	/** Paths of person notes in use, and contacts' folded names: which file changes need a rebuild. */
+	private notePaths = new Set<string>();
+	private contactNames = new Set<string>();
 	private settingTab!: ContactLinksSettingTab;
 
 	async onload(): Promise<void> {
@@ -56,6 +61,11 @@ export default class ContactLinksPlugin extends Plugin {
 			id: "open-contacts-panel",
 			name: "Open contacts panel",
 			callback: () => void this.openContactsPanel(),
+		});
+		this.addCommand({
+			id: "move-notes-to-people-folder",
+			name: "Move matching notes to the people folder",
+			callback: () => this.moveAllElsewhere(),
 		});
 		this.addCommand({
 			id: "import-contacts",
@@ -79,10 +89,18 @@ export default class ContactLinksPlugin extends Plugin {
 			const f = this.settings.peopleFolder;
 			return f ? path.startsWith(f + "/") : !path.includes("/");
 		};
+		// Rebuild for notes in the people folder, notes used from elsewhere, and new or renamed notes
+		// whose name is a contact's full name.
+		const matters = (path: string) => {
+			if (inFolder(path) || this.notePaths.has(path)) return true;
+			const name = path.split("/").pop()!.replace(/\.md$/, "");
+			return path.endsWith(".md") && this.contactNames.has(fold(name));
+		};
 		const onFile = (file: TAbstractFile, oldPath?: string) => {
-			if (inFolder(file.path) || (oldPath && inFolder(oldPath))) this.rebuildSoon();
+			if (matters(file.path) || (oldPath && matters(oldPath))) this.rebuildSoon();
 		};
 		this.registerEvent(this.app.metadataCache.on("changed", (file) => onFile(file)));
+		this.registerEvent(this.app.vault.on("create", (file) => onFile(file)));
 		this.registerEvent(this.app.vault.on("delete", (file) => onFile(file)));
 		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => onFile(file, oldPath)));
 	}
@@ -93,10 +111,18 @@ export default class ContactLinksPlugin extends Plugin {
 		const notes = readPersonNotes(this.app, this.settings.peopleFolder);
 		// Priority for the merged name and id: Microsoft 365, then Google, then file imports, so a
 		// fresh sync wins over an older file import of the same person (as before 1.1).
-		const people = dropAutomated([...this.data.synced.m365, ...this.data.synced.google, ...this.data.contacts]);
-		this.beforeMerge = people.length;
-		this.merged = dedupeContacts(people, { sameName: this.settings.mergeSameName });
-		this.index.set(mergePeople(this.merged, notes), mergedUsage(this.merged, this.data.usage));
+		const contacts = dropAutomated([...this.data.synced.m365, ...this.data.synced.google, ...this.data.contacts]);
+		this.beforeMerge = contacts.length;
+		this.merged = dedupeContacts(contacts, { sameName: this.settings.mergeSameName });
+		const folder = this.settings.peopleFolder;
+		const elsewhere = this.settings.findNotesElsewhere ? (name: string) => findNoteElsewhere(this.app, name, folder) : undefined;
+		const people = mergePeople(this.merged, notes, elsewhere);
+		this.notePaths = new Set(people.flatMap((p) => (p.path ? [p.path] : [])));
+		// File names as ensurePersonNote would write them, and only names the lookup would use.
+		this.contactNames = new Set(
+			elsewhere ? this.merged.map((c) => fold(safeFileName(c.name))).filter((n) => words(n).length >= 2) : [],
+		);
+		this.index.set(people, mergedUsage(this.merged, this.data.usage));
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CONTACTS)) {
 			if (leaf.view instanceof ContactsView) leaf.view.render();
 		}
@@ -309,6 +335,71 @@ export default class ContactLinksPlugin extends Plugin {
 			}
 		};
 		input.click();
+	}
+
+	// ── Person notes ────────────────────────────────────────────────────────
+
+	/** Move one person's note from elsewhere into the people folder, after confirming. */
+	movePersonNote(person: Person): void {
+		if (!person.path || !person.elsewhere) return;
+		const path = person.path;
+		const folder = this.settings.peopleFolder || "the vault root";
+		new ConfirmModal(this.app, {
+			title: `Move ${person.name}'s note?`,
+			text: `${path} will be moved to ${folder}. Links to it keep working.`,
+			confirmText: "Move note",
+			onConfirm: () => void this.moveNotes([path]),
+		}).open();
+	}
+
+	/** Move every note used from outside the people folder into it, after confirming the list. */
+	moveAllElsewhere(): void {
+		const paths = this.index
+			.all()
+			.filter((p) => p.elsewhere && p.path)
+			.map((p) => p.path!)
+			.sort();
+		if (!paths.length) {
+			new Notice("No person notes outside the people folder were found.");
+			return;
+		}
+		const folder = this.settings.peopleFolder || "the vault root";
+		new ConfirmModal(this.app, {
+			title: `Move ${paths.length} ${paths.length === 1 ? "note" : "notes"} to ${folder}?`,
+			text: "These notes have the full name of one of your contacts. Untick any that are not about that person. Links to the moved notes keep working.",
+			items: paths,
+			selectable: true,
+			confirmText: "Move ticked notes",
+			onConfirm: (selected) => void this.moveNotes(selected),
+		}).open();
+	}
+
+	private async moveNotes(paths: string[]): Promise<void> {
+		const failed: string[] = [];
+		for (const path of paths) {
+			try {
+				await moveToPeopleFolder(this.app, this.settings.peopleFolder, path);
+			} catch (err) {
+				console.error(`Contact Links: could not move ${path}`, err);
+				failed.push(`${path}: ${(err as Error).message}`);
+			}
+		}
+		this.rebuild();
+		const moved = paths.length - failed.length;
+		new Notice(failed.length ? `Moved ${moved} of ${paths.length} notes. Not moved: ${failed.join("; ")}` : `Moved ${moved} ${moved === 1 ? "note" : "notes"}.`);
+	}
+
+	/** Fill in the email, company, role and nickname a person note is missing. Changes nothing else. */
+	async addDetails(person: Person): Promise<void> {
+		const file = person.path ? this.app.vault.getFileByPath(person.path) : null;
+		if (!file) return;
+		try {
+			const added = await addContactDetails(this.app, file, person);
+			new Notice(added.length ? `Added ${added.join(", ")} to ${file.basename}.` : `${file.basename} already has these contact details.`);
+		} catch (err) {
+			console.error("Contact Links: could not add contact details", err);
+			new Notice("Could not update the note. See the developer console for details.");
+		}
 	}
 
 	/** Remove the contacts imported from files. Synced contacts go when you sign out of their account. */

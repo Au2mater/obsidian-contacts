@@ -75,6 +75,16 @@ Merging happens only in memory: each account's contacts are stored as synced, so
 
 Both CSV and vCard (`.vcf`) files work. That includes English and Danish column headers, comma or semicolon separators, UTF-8 or Windows ANSI encoding, and Outlook's vCard 2.1 quoted-printable format. Importing again updates contacts by email address; it doesn't create duplicates.
 
+## Notes outside the people folder
+
+If a contact has no note in the people folder, but a link to their full name already opens a note somewhere else (say `Colleagues/Søren Jensen.md`), that note is used as their person note. Suggestions link to it and the panel opens it, so no second note with the same name is created. This uses Obsidian's own link resolution and only reads your notes. To stay on the safe side, it applies only to full names of two or more words, skips a note whose `email` belongs to someone else, and never uses one note for two contacts. You can turn it off under **Use existing notes outside the folder**.
+
+Nothing is moved unless you ask:
+- In the contacts panel, these people have a "note in *folder*" tag. Right-click → **Move note to the people folder**.
+- The command **Contact Links: Move matching notes to the people folder** lists every such note and moves them all after you confirm.
+
+Moving uses Obsidian's rename, so links to the notes keep working. Right-click → **Add contact details to note** fills in the email, company, role and nickname a note is missing, and changes nothing else.
+
 ## Contacts panel
 
 The contact icon in the ribbon, or the command **Contact Links: Open contacts panel**, opens a list of everyone the plugin knows in the right sidebar, with a search field that stays at the top. Each row shows where the person comes from (Microsoft, Google, File), whether they have a note, and their role, company and email.
@@ -82,7 +92,7 @@ The contact icon in the ribbon, or the command **Contact Links: Open contacts pa
 - The refresh button next to the search field syncs every signed-in account now.
 - Click someone with a note to open it (Ctrl/Cmd-click opens it in a new tab).
 - Click someone without a note to create one: you're asked to confirm first.
-- Right-click for **Open note** / **Create note…**, **Open in new tab** and **Copy email address**.
+- Right-click for **Open note** / **Create note…**, **Open in new tab**, **Add contact details to note**, **Move note to the people folder** and **Copy email address**.
 
 ## Settings
 
@@ -91,6 +101,7 @@ The contact icon in the ribbon, or the command **Contact Links: Open contacts pa
 | Microsoft 365: saved contacts / people you work with | on / on (500 people) |
 | Google: saved contacts / other contacts | on / on |
 | Merge people with the same name | off |
+| Use existing notes outside the folder | on |
 | Sync every | 12 hours |
 | People folder | `People` |
 | Create a note on first mention | on |

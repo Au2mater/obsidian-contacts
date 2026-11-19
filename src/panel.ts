@@ -1,4 +1,5 @@
-import { App, debounce, ItemView, Keymap, Menu, Modal, Notice, PaneType, setIcon, Setting, WorkspaceLeaf } from "obsidian";
+import { debounce, ItemView, Keymap, Menu, Notice, PaneType, setIcon, WorkspaceLeaf } from "obsidian";
+import { ConfirmModal } from "./confirm";
 import type { Person } from "./core/types";
 import type ContactLinksPlugin from "./main";
 import { ensurePersonNote } from "./notes";
@@ -110,7 +111,11 @@ export class ContactsView extends ItemView {
 		top.createSpan({ text: person.name });
 		const sources = person.contact ? (person.contact.sources ?? [person.contact.source ?? "file"]) : [];
 		for (const s of sources) top.createSpan({ cls: "contact-links-badge", text: SOURCE_LABELS[s] ?? s });
-		if (person.path) top.createSpan({ cls: "contact-links-badge", text: "note" });
+		if (person.path && person.elsewhere) {
+			const parts = person.path.split("/");
+			const where = parts.length > 1 ? parts[parts.length - 2] : "vault root";
+			top.createSpan({ cls: "contact-links-badge mod-elsewhere", text: `note in ${where}`, attr: { "aria-label": person.path } });
+		} else if (person.path) top.createSpan({ cls: "contact-links-badge", text: "note" });
 		const details = [person.title, person.company, person.email].filter(Boolean).join(" · ");
 		if (details) row.createDiv({ cls: "contact-links-details", text: details });
 		row.setAttr("aria-label", person.path ? "Open note" : "Create a note…");
@@ -127,7 +132,14 @@ export class ContactsView extends ItemView {
 			void this.openPerson(person, paneType);
 			return;
 		}
-		new CreateNoteModal(this.app, person, this.plugin.settings.peopleFolder, () => void this.openPerson(person, paneType)).open();
+		const folder = this.plugin.settings.peopleFolder;
+		const what = [person.email && "email", person.company && "company", person.title && "role"].filter(Boolean).join(", ");
+		new ConfirmModal(this.app, {
+			title: `Create a note for ${person.name}?`,
+			text: `A new note will be created in ${folder || "the vault root"}${what ? ` with their ${what}` : ""}.`,
+			confirmText: "Create note",
+			onConfirm: () => void this.openPerson(person, paneType),
+		}).open();
 	}
 
 	private showMenu(person: Person, evt: MouseEvent): void {
@@ -144,6 +156,22 @@ export class ContactsView extends ItemView {
 					.setTitle("Open in new tab")
 					.setIcon("file-plus-2")
 					.onClick(() => this.activate(person, "tab")),
+			);
+		}
+		if (person.path && person.contact) {
+			menu.addItem((item) =>
+				item
+					.setTitle("Add contact details to note")
+					.setIcon("user-pen")
+					.onClick(() => void this.plugin.addDetails(person)),
+			);
+		}
+		if (person.path && person.elsewhere) {
+			menu.addItem((item) =>
+				item
+					.setTitle("Move note to the people folder")
+					.setIcon("folder-input")
+					.onClick(() => this.plugin.movePersonNote(person)),
 			);
 		}
 		const email = person.email;
@@ -170,41 +198,5 @@ export class ContactsView extends ItemView {
 			console.error("Contact Links: could not open note", err);
 			new Notice("Could not open the person note. See the developer console for details.");
 		}
-	}
-}
-
-/** Asks before creating a person note from the panel. Enter confirms, Esc cancels. */
-class CreateNoteModal extends Modal {
-	constructor(
-		app: App,
-		private person: Person,
-		private folder: string,
-		private onConfirm: () => void,
-	) {
-		super(app);
-	}
-
-	onOpen(): void {
-		const { person } = this;
-		this.setTitle(`Create a note for ${person.name}?`);
-		const what = [person.email && "email", person.company && "company", person.title && "role"].filter(Boolean).join(", ");
-		this.contentEl.createEl("p", {
-			text: `A new note will be created in ${this.folder || "the vault root"}${what ? ` with their ${what}` : ""}.`,
-		});
-		const confirm = () => {
-			this.close();
-			this.onConfirm();
-		};
-		this.scope.register([], "Enter", (evt) => {
-			evt.preventDefault();
-			confirm();
-		});
-		new Setting(this.contentEl)
-			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
-			.addButton((b) => b.setButtonText("Create note").setCta().onClick(confirm));
-	}
-
-	onClose(): void {
-		this.contentEl.empty();
 	}
 }

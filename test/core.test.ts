@@ -114,3 +114,28 @@ describe("link edges", () => {
 		expect(trailingClose("]]", "mention")).toBe(0);
 	});
 });
+
+describe("person notes outside the people folder", () => {
+	const note = (path: string, emails: string[] = [], aliases: string[] = []) => ({ path, basename: path.split("/").pop()!.replace(/\.md$/, ""), aliases, emails });
+	const contact = (name: string, email: string) => ({ id: email, name, emails: [email] });
+
+	it("uses the note a link to the full name opens", () => {
+		const found = note("Kollegaer/Søren Jensen.md", [], ["SJ"]);
+		const [p] = mergePeople([contact("Søren Jensen", "sj@x.dk")], [], (name) => (name === "Søren Jensen" ? found : null));
+		expect(p).toMatchObject({ key: "contact:sj@x.dk", path: "Kollegaer/Søren Jensen.md", elsewhere: true, aliases: ["SJ"] });
+	});
+	it("skips single names, other people's notes and notes already claimed", () => {
+		const lookup = (n: ReturnType<typeof note>) => () => n;
+		expect(mergePeople([contact("Support", "s@x.dk")], [], lookup(note("A/Support.md")))[0].path).toBeUndefined();
+		expect(mergePeople([contact("Anna Berg", "a@x.dk")], [], lookup(note("A/Anna Berg.md", ["other@x.dk"])))[0].path).toBeUndefined();
+		expect(mergePeople([contact("Anna Berg", "a@x.dk")], [], lookup(note("A/Anna Berg.md", ["a@x.dk"])))[0].path).toBe("A/Anna Berg.md");
+		const twice = mergePeople([contact("Anna Berg", "a@x.dk"), contact("Anna Berg", "b@y.dk")], [], lookup(note("A/Anna Berg.md")));
+		expect(twice.map((p) => p.path)).toEqual(["A/Anna Berg.md", undefined]);
+	});
+	it("prefers the note in the people folder", () => {
+		const people = mergePeople([contact("Anna Berg", "a@x.dk")], [note("People/Anna Berg.md")], () => note("A/Anna Berg.md"));
+		expect(people).toHaveLength(1);
+		expect(people[0]).toMatchObject({ path: "People/Anna Berg.md" });
+		expect(people[0].elsewhere).toBeUndefined();
+	});
+});

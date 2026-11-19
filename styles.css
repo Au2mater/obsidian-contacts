@@ -99,3 +99,18 @@
 .contact-links-row:hover {
 	background-color: var(--background-modifier-hover);
 }
+
+.contact-links-badge.mod-elsewhere {
+	color: var(--text-accent);
+	border-color: var(--text-accent);
+}
+
+.contact-links-confirm-list {
+	max-height: 40vh;
+	overflow-y: auto;
+	font-size: var(--font-ui-small);
+}
+
+.contact-links-confirm-list li.mod-selectable {
+	list-style: none;
+}

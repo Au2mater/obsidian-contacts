@@ -30,6 +30,62 @@ export function readPersonNotes(app: App, folder: string): PersonNote[] {
 	return notes;
 }
 
+const inFolder = (path: string, folder: string) => (folder ? path.startsWith(normalizePath(folder) + "/") : !path.includes("/"));
+
+/**
+ * The note a link to `name` would open, when it is outside the people folder: an existing note for
+ * that person kept somewhere else. Uses Obsidian's own link resolution and reads only the cache.
+ */
+export function findNoteElsewhere(app: App, name: string, folder: string): PersonNote | null {
+	const linkName = safeFileName(name);
+	if (!linkName) return null;
+	const file = app.metadataCache.getFirstLinkpathDest(linkName, "");
+	if (!file || file.extension !== "md" || inFolder(file.path, folder)) return null;
+	return toPersonNote(app, file);
+}
+
+/** Move a person note into the people folder. Obsidian's rename keeps every link to it working. */
+export async function moveToPeopleFolder(app: App, folder: string, path: string): Promise<TFile> {
+	const file = app.vault.getFileByPath(path);
+	if (!file) throw new Error(`${path} no longer exists.`);
+	await ensureFolder(app, folder);
+	const target = normalizePath(folder ? `${folder}/${file.name}` : file.name);
+	if (app.vault.getAbstractFileByPath(target)) throw new Error(`${target} already exists.`);
+	await app.fileManager.renameFile(file, target);
+	return file;
+}
+
+/** Fill in the frontmatter fields a person note is missing (email, company, role, nickname). Returns what was added. */
+export async function addContactDetails(app: App, file: TFile, person: Person): Promise<string[]> {
+	const added: string[] = [];
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+		const has = (key: string) => asList(fm[key]).length > 0;
+		if (person.email && !has("email") && !has("emails")) {
+			fm.email = person.email;
+			added.push("email");
+		}
+		if (person.company && !has("company")) {
+			fm.company = person.company;
+			added.push("company");
+		}
+		if (person.title && !has("role")) {
+			fm.role = person.title;
+			added.push("role");
+		}
+		const nickname = person.contact?.nickname;
+		if (nickname) {
+			const aliases = asList(fm.aliases ?? fm.alias);
+			if (!aliases.some((a) => a.toLowerCase() === nickname.toLowerCase())) {
+				fm.aliases = [...aliases, nickname];
+				// The values of a legacy `alias:` key now live in `aliases:`.
+				delete fm.alias;
+				added.push("nickname");
+			}
+		}
+	});
+	return added;
+}
+
 function toPersonNote(app: App, file: TFile): PersonNote {
 	const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
 	return {
@@ -87,7 +143,7 @@ async function createNote(app: App, path: string, person: Person): Promise<TFile
 	return file;
 }
 
-async function ensureFolder(app: App, folder: string): Promise<void> {
+export async function ensureFolder(app: App, folder: string): Promise<void> {
 	if (!folder) return;
 	const path = normalizePath(folder);
 	const existing = app.vault.getAbstractFileByPath(path);
