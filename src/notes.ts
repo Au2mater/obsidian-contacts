@@ -7,23 +7,38 @@ const asList = (v: unknown): string[] =>
 		.map((x) => String(x).trim())
 		.filter(Boolean);
 
-/** Read every note in the people folder from the metadata cache. No file reads. */
+/**
+ * Read the notes in the people folder (and its subfolders) from the metadata cache.
+ * Walks only that folder, never the whole vault, and reads no file contents.
+ */
 export function readPersonNotes(app: App, folder: string): PersonNote[] {
-	const prefix = folder ? normalizePath(folder) + "/" : "";
+	const root = folder ? app.vault.getFolderByPath(normalizePath(folder)) : app.vault.getRoot();
 	const notes: PersonNote[] = [];
-	for (const file of app.vault.getMarkdownFiles()) {
-		if (prefix && !file.path.startsWith(prefix)) continue;
-		if (!prefix && file.parent && !file.parent.isRoot()) continue;
-		const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
-		notes.push({
-			path: file.path,
-			basename: file.basename,
-			aliases: asList(fm.aliases ?? fm.alias),
-			emails: asList(fm.email ?? fm.emails).map((e) => e.toLowerCase()),
-			company: typeof fm.company === "string" ? fm.company : undefined,
-		});
+	if (!root) return notes;
+	// At the vault root, only top-level notes count; a named folder includes its subfolders.
+	const stack: TFolder[] = [root];
+	while (stack.length) {
+		const dir = stack.pop()!;
+		for (const child of dir.children) {
+			if (child instanceof TFolder) {
+				if (folder) stack.push(child);
+			} else if (child instanceof TFile && child.extension === "md") {
+				notes.push(toPersonNote(app, child));
+			}
+		}
 	}
 	return notes;
+}
+
+function toPersonNote(app: App, file: TFile): PersonNote {
+	const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+	return {
+		path: file.path,
+		basename: file.basename,
+		aliases: asList(fm.aliases ?? fm.alias),
+		emails: asList(fm.email ?? fm.emails).map((e) => e.toLowerCase()),
+		company: typeof fm.company === "string" ? fm.company : undefined,
+	};
 }
 
 /** Return the person's note, creating a minimal one if it does not exist yet. */
@@ -63,7 +78,7 @@ function isSamePerson(app: App, file: TFile, person: Person): boolean {
 
 async function createNote(app: App, path: string, person: Person): Promise<TFile> {
 	const file = await app.vault.create(path, "");
-	await app.fileManager.processFrontMatter(file, (fm) => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		if (person.aliases.length) fm.aliases = person.aliases;
 		if (person.email) fm.email = person.email;
 		if (person.company) fm.company = person.company;

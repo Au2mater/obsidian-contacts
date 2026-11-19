@@ -156,7 +156,7 @@ export class MicrosoftAuth {
 			// Microsoft rotates refresh tokens; keep the newest one.
 			refresh_token: tokens.refresh_token || previous?.refresh_token || "",
 			expires_at: Date.now() + (Number(tokens.expires_in) || 3600) * 1000,
-			account: String(claims?.preferred_username || claims?.email || claims?.name || previous?.account || ""),
+			account: firstString(claims?.preferred_username, claims?.email, claims?.name, previous?.account),
 		});
 	}
 
@@ -244,10 +244,14 @@ function jwtClaims(token: string | undefined): Record<string, unknown> | null {
 	try {
 		const part = token!.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
 		const bytes = Uint8Array.from(atob(part), (c) => c.charCodeAt(0));
-		return JSON.parse(new TextDecoder().decode(bytes));
+		return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
 	} catch {
 		return null;
 	}
+}
+
+function firstString(...values: unknown[]): string {
+	return values.find((v): v is string => typeof v === "string" && v.length > 0) ?? "";
 }
 
 export function hashString(text: string): string {

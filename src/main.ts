@@ -106,7 +106,7 @@ export default class ContactLinksPlugin extends Plugin {
 
 	signIn(): void {
 		if (!this.auth.available) {
-			new Notice("Microsoft sign-in needs Obsidian 1.11.4 or later.");
+			new Notice("Microsoft sign-in needs Obsidian 1.13 or later.");
 			return;
 		}
 		new SignInModal(this.app, this).open();
@@ -115,7 +115,7 @@ export default class ContactLinksPlugin extends Plugin {
 	signedIn(): void {
 		new Notice(`Signed in to Microsoft 365${this.auth.account ? ` as ${this.auth.account}` : ""}. Syncing contacts…`);
 		void this.sync(true).then(() => {
-			if (this.settingTab.containerEl.isConnected) this.settingTab.display();
+			this.refreshSettings();
 		});
 	}
 
@@ -152,6 +152,7 @@ export default class ContactLinksPlugin extends Plugin {
 				this.lastSyncError = "";
 				await this.saveSettings();
 				if (force) new Notice(`Contacts: ${synced.length} synced from Microsoft 365.`);
+				this.refreshSettings();
 			} catch (err) {
 				this.lastSyncError = (err as Error).message;
 				console.error("Contact Links: sync failed", err);
@@ -162,6 +163,15 @@ export default class ContactLinksPlugin extends Plugin {
 			}
 		})();
 		return this.syncing;
+	}
+
+	/** Re-render the settings tab if it is open, so counts and sign-in state stay current. */
+	refreshSettings(): void {
+		try {
+			this.settingTab.update();
+		} catch {
+			// The settings window has not been set up yet; it renders fresh when opened.
+		}
 	}
 
 	async saveSettings(): Promise<void> {
@@ -178,9 +188,10 @@ export default class ContactLinksPlugin extends Plugin {
 	}
 
 	importFromFile(done?: () => void): void {
-		const input = document.createElement("input");
-		input.type = "file";
-		input.accept = ".csv,.vcf,.vcard,text/csv,text/vcard,text/x-vcard";
+		const input = createEl("input", {
+			type: "file",
+			attr: { accept: ".csv,.vcf,.vcard,text/csv,text/vcard,text/x-vcard" },
+		});
 		input.onchange = async () => {
 			const file = input.files?.[0];
 			if (!file) return;

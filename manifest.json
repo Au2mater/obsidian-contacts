@@ -1,8 +1,8 @@
 {
   "id": "outlook-contacts-autocomplete",
   "name": "Contact Links",
-  "version": "0.2.0",
-  "minAppVersion": "1.11.4",
+  "version": "0.2.1",
+  "minAppVersion": "1.13.0",
   "description": "Sync contacts from Microsoft 365 (or import CSV/vCard) and autocomplete them as links. A minimal person note is created the first time you mention someone.",
   "author": "Au2mater",
   "isDesktopOnly": false,

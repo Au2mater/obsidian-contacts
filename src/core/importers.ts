@@ -8,7 +8,7 @@ export interface ImportResult {
 
 /** Detect the format from the content and parse it. */
 export function parseContacts(text: string): ImportResult {
-	const clean = text.replace(/^﻿/, "");
+	const clean = text.replace(/^\uFEFF/, "");
 	return /^\s*BEGIN:VCARD/im.test(clean) ? parseVCard(clean) : parseCsv(clean);
 }
 

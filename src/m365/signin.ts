@@ -80,13 +80,11 @@ export class SignInModal extends Modal {
 		codeRow.createEl("code", { text: flow.user_code });
 		const actions = contentEl.createDiv({ cls: "contact-links-actions" });
 		const copy = actions.createEl("button", { text: "Copy code" });
-		copy.addEventListener("click", async () => {
-			try {
-				await navigator.clipboard.writeText(flow.user_code);
-				copy.setText("Copied");
-			} catch {
-				new Notice("Could not copy; select the code instead.");
-			}
+		copy.addEventListener("click", () => {
+			navigator.clipboard.writeText(flow.user_code).then(
+				() => copy.setText("Copied"),
+				() => new Notice("Could not copy; select the code instead."),
+			);
 		});
 		const open = actions.createEl("button", { cls: "mod-cta", text: "Open sign-in page" });
 		open.addEventListener("click", () => window.open(flow.verification_uri, "_blank"));
