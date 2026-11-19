@@ -37,3 +37,43 @@
 	justify-content: center;
 	gap: var(--size-4-2);
 }
+
+.contact-links-panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.contact-links-header {
+	position: sticky;
+	/* The view's own top padding would otherwise show list rows above the pinned header. */
+	top: calc(-1 * var(--size-4-3));
+	margin-top: calc(-1 * var(--size-4-3));
+	padding: var(--size-4-3) 0 var(--size-4-2);
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	background-color: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.contact-links-search {
+	width: 100%;
+}
+
+.contact-links-count,
+.contact-links-empty {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.contact-links-row {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+
+.contact-links-row:hover {
+	background-color: var(--background-modifier-hover);
+}

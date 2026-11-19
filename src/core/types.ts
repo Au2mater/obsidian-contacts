@@ -1,4 +1,7 @@
-/** A contact as imported from Outlook (CSV or vCard). */
+/** Where a contact came from. */
+export type Source = "file" | "m365" | "google";
+
+/** A contact as imported from a file or synced from Microsoft 365 or Google. */
 export interface Contact {
 	/** Stable identity: first email (lowercased), or `name:<folded name>` when there is no email. */
 	id: string;
@@ -8,7 +11,11 @@ export interface Contact {
 	company?: string;
 	title?: string;
 	/** Where it came from. Missing means imported from a file. */
-	source?: "file" | "m365";
+	source?: Source;
+	/** Set on a contact merged from duplicates: every source it was found in. */
+	sources?: Source[];
+	/** Set on a contact merged from duplicates: the ids of the other copies. */
+	otherIds?: string[];
 	/** Position in Microsoft's "people you work with" ranking (0 = most relevant). */
 	rank?: number;
 }

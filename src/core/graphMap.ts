@@ -94,9 +94,3 @@ export function combineSynced(contacts: Contact[], people: Contact[]): Contact[]
 	}
 	return [...byId.values()];
 }
-
-/** Replace the previously synced contacts, keep the ones imported from files. */
-export function replaceSynced(existing: Contact[], synced: Contact[]): Contact[] {
-	const ids = new Set(synced.map((c) => c.id));
-	return [...existing.filter((c) => c.source !== "m365" && !ids.has(c.id)), ...synced];
-}

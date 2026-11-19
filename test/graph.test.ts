@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combineSynced, fromGraphContact, fromGraphPerson, replaceSynced } from "../src/core/graphMap";
+import { combineSynced, fromGraphContact, fromGraphPerson } from "../src/core/graphMap";
 
 describe("Microsoft Graph mapping", () => {
 	it("maps a saved contact", () => {
@@ -24,11 +24,5 @@ describe("Microsoft Graph mapping", () => {
 		const all = combineSynced([c], [p1, p2]);
 		expect(all).toHaveLength(2);
 		expect(all[0]).toMatchObject({ nickname: "Sø", rank: 0, title: "CTO" });
-	});
-	it("replaces synced contacts and keeps file imports", () => {
-		const file = { id: "f@x.dk", name: "F", emails: ["f@x.dk"] };
-		const old = { id: "old@x.dk", name: "Old", emails: ["old@x.dk"], source: "m365" as const };
-		const fresh = { id: "new@x.dk", name: "New", emails: ["new@x.dk"], source: "m365" as const };
-		expect(replaceSynced([file, old], [fresh]).map((c) => c.name)).toEqual(["F", "New"]);
 	});
 });

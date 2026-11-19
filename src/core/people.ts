@@ -97,6 +97,11 @@ export class PeopleIndex {
 		return this.entries.length;
 	}
 
+	/** Everyone in the index, in no particular order. */
+	all(): Person[] {
+		return this.entries.map((e) => e.person);
+	}
+
 	set(people: Person[], usage: Record<string, number> = this.usage): void {
 		this.usage = usage;
 		this.entries = people.map((person) => {

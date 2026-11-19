@@ -1,48 +1,48 @@
 import { debounce, Notice, Plugin, TAbstractFile } from "obsidian";
-import { replaceSynced } from "./core/graphMap";
+import { dedupeContacts, dropAutomated, mergedUsage } from "./core/dedupe";
 import { mergeContacts, parseContacts } from "./core/importers";
 import { mergePeople, PeopleIndex } from "./core/people";
+import { migrate, PluginData, Provider } from "./core/pluginData";
 import type { Contact } from "./core/types";
+import { GoogleAuth } from "./google/auth";
+import { fetchFromGoogle } from "./google/people";
+import { GoogleSignInModal } from "./google/signin";
 import { MicrosoftAuth, NotSignedInError } from "./m365/auth";
 import { fetchFromMicrosoft } from "./m365/graph";
 import { SignInModal } from "./m365/signin";
 import { readPersonNotes } from "./notes";
 import { ContactLinksSettings, ContactLinksSettingTab, DEFAULT_SETTINGS } from "./settings";
+import { ContactsView, VIEW_TYPE_CONTACTS } from "./panel";
 import { PeopleSuggest } from "./suggest";
 
-interface PluginData {
-	settings: ContactLinksSettings;
-	contacts: Contact[];
-	/** How often each person was picked; a small ranking boost. */
-	usage: Record<string, number>;
-	/** When contacts were last synced from Microsoft 365 (ms since epoch). */
-	lastSync?: number;
-}
+export const PROVIDER_NAMES: Record<Provider, string> = { m365: "Microsoft 365", google: "Google" };
 
 /** How often to check whether an automatic sync is due. */
 const SYNC_CHECK_MS = 10 * 60 * 1000;
 
 export default class ContactLinksPlugin extends Plugin {
-	data: PluginData = { settings: { ...DEFAULT_SETTINGS }, contacts: [], usage: {} };
+	data: PluginData = { settings: { ...DEFAULT_SETTINGS }, contacts: [], synced: { m365: [], google: [] }, usage: {}, lastSync: {} };
 	index = new PeopleIndex();
+	/** All contacts from files and accounts, duplicates merged. */
+	merged: Contact[] = [];
 
 	/** Same object as `data.settings`. */
 	settings: ContactLinksSettings = this.data.settings;
 	auth!: MicrosoftAuth;
-	lastSyncError = "";
-	private syncing: Promise<void> | null = null;
+	google!: GoogleAuth;
+	lastSyncError: Partial<Record<Provider, string>> = {};
+	private syncing: Partial<Record<Provider, Promise<void>>> = {};
+	/** Bumped on sign-out, so a sync still running then does not write its contacts back. */
+	private generation: Record<Provider, number> = { m365: 0, google: 0 };
+	/** Contacts left after dropping automated addresses, before merging duplicates. */
+	beforeMerge = 0;
 	private settingTab!: ContactLinksSettingTab;
 
 	async onload(): Promise<void> {
-		const saved = ((await this.loadData()) ?? {}) as Partial<PluginData>;
-		this.data = {
-			settings: { ...DEFAULT_SETTINGS, ...saved.settings },
-			contacts: saved.contacts ?? [],
-			usage: saved.usage ?? {},
-			lastSync: saved.lastSync,
-		};
+		this.data = migrate(((await this.loadData()) ?? {}) as Record<string, unknown>, DEFAULT_SETTINGS);
 		this.settings = this.data.settings;
-		this.auth = new MicrosoftAuth(this.app, () => this.settings, () => this.sessionEnded());
+		this.auth = new MicrosoftAuth(this.app, () => this.settings, () => this.sessionEnded("m365"));
+		this.google = new GoogleAuth(this.app, () => this.settings.googleClientId, () => this.sessionEnded("google"));
 
 		const suggest = new PeopleSuggest(this);
 		this.registerEditorSuggest(suggest);
@@ -50,6 +50,13 @@ export default class ContactLinksPlugin extends Plugin {
 		this.settingTab = new ContactLinksSettingTab(this.app, this);
 		this.addSettingTab(this.settingTab);
 
+		this.registerView(VIEW_TYPE_CONTACTS, (leaf) => new ContactsView(leaf, this));
+		this.addRibbonIcon("contact", "Open contacts", () => void this.openContactsPanel());
+		this.addCommand({
+			id: "open-contacts-panel",
+			name: "Open contacts panel",
+			callback: () => void this.openContactsPanel(),
+		});
 		this.addCommand({
 			id: "import-contacts",
 			name: "Import contacts from file (CSV or vCard)",
@@ -57,8 +64,15 @@ export default class ContactLinksPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "sync-microsoft",
-			name: "Sync contacts from Microsoft 365",
-			callback: () => (this.auth.signedIn ? void this.sync(true) : this.signIn()),
+			name: "Sync contacts now",
+			callback: () => {
+				if (!this.auth.signedIn && !this.google.signedIn) {
+					new Notice("Sign in to Microsoft 365 or Google first.");
+					this.openSettings();
+				} else if (!(["m365", "google"] as const).some((p) => this.isSignedIn(p) && this.syncEnabled(p))) {
+					new Notice("Syncing is turned off for every signed-in account. Turn on a source under Settings → Contact Links.");
+				} else void this.sync(true);
+			},
 		});
 
 		// Person notes come from the metadata cache; rebuild when it is ready and when people notes change.
@@ -84,7 +98,36 @@ export default class ContactLinksPlugin extends Plugin {
 
 	rebuild(): void {
 		const notes = readPersonNotes(this.app, this.settings.peopleFolder);
-		this.index.set(mergePeople(this.data.contacts, notes), this.data.usage);
+		// Priority for the merged name and id: Microsoft 365, then Google, then file imports, so a
+		// fresh sync wins over an older file import of the same person (as before 1.1).
+		const people = dropAutomated([...this.data.synced.m365, ...this.data.synced.google, ...this.data.contacts]);
+		this.beforeMerge = people.length;
+		this.merged = dedupeContacts(people, { sameName: this.settings.mergeSameName });
+		this.index.set(mergePeople(this.merged, notes), mergedUsage(this.merged, this.data.usage));
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CONTACTS)) {
+			if (leaf.view instanceof ContactsView) leaf.view.render();
+		}
+	}
+
+	async openContactsPanel(): Promise<void> {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(VIEW_TYPE_CONTACTS)[0];
+		if (!leaf) {
+			leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf("tab");
+			await leaf.setViewState({ type: VIEW_TYPE_CONTACTS, active: true });
+		}
+		await workspace.revealLeaf(leaf);
+	}
+
+	/** Open Obsidian's settings on this plugin's tab. Uses an internal API; falls back to a notice. */
+	openSettings(): void {
+		const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+		if (!setting) {
+			new Notice("Open Settings → Contact Links.");
+			return;
+		}
+		setting.open();
+		setting.openTabById(this.manifest.id);
 	}
 
 	/**
@@ -102,7 +145,7 @@ export default class ContactLinksPlugin extends Plugin {
 		}
 	}
 
-	// ── Microsoft 365 ───────────────────────────────────────────────────────
+	// ── Accounts ────────────────────────────────────────────────────────────
 
 	signIn(): void {
 		if (!this.auth.available) {
@@ -112,57 +155,102 @@ export default class ContactLinksPlugin extends Plugin {
 		new SignInModal(this.app, this).open();
 	}
 
+	signInGoogle(): void {
+		if (!this.google.canSignIn) {
+			new Notice("Google sign-in works in Obsidian on desktop, version 1.13 or later.");
+			return;
+		}
+		new GoogleSignInModal(this.app, this).open();
+	}
+
 	signedIn(): void {
 		new Notice(`Signed in to Microsoft 365${this.auth.account ? ` as ${this.auth.account}` : ""}. Syncing contacts…`);
-		void this.sync(true).then(() => {
-			this.refreshSettings();
-		});
+		void this.syncProvider("m365", true).then(() => this.refreshSettings());
 	}
 
-	signOut(): void {
-		this.auth.signOut();
-		new Notice("Signed out of Microsoft 365. Synced contacts are kept until you clear them.");
+	googleSignedIn(): void {
+		new Notice(`Signed in to Google${this.google.account ? ` as ${this.google.account}` : ""}. Syncing contacts…`);
+		void this.syncProvider("google", true).then(() => this.refreshSettings());
 	}
 
-	private sessionEnded(): void {
-		new Notice("Your Microsoft 365 sign-in has expired. Sign in again under Settings → Contact Links.");
+	/** Sign out and remove the contacts synced from that account. Person notes are kept. */
+	async signOut(provider: Provider): Promise<void> {
+		if (provider === "m365") this.auth.signOut();
+		else this.google.signOut();
+		this.generation[provider]++;
+		this.data.synced[provider] = [];
+		delete this.data.lastSync[provider];
+		this.lastSyncError[provider] = "";
+		await this.saveSettings();
+		new Notice(`Signed out of ${PROVIDER_NAMES[provider]}. Its synced contacts were removed; person notes are kept.`);
+	}
+
+	private sessionEnded(provider: Provider): void {
+		new Notice(`Your ${PROVIDER_NAMES[provider]} sign-in has expired. Sign in again under Settings → Contact Links.`);
+	}
+
+	isSignedIn(provider: Provider): boolean {
+		return provider === "m365" ? this.auth.signedIn : this.google.signedIn;
+	}
+
+	syncEnabled(provider: Provider): boolean {
+		const s = this.settings;
+		return provider === "m365" ? s.syncContacts || s.syncPeople : s.googleSyncContacts || s.googleSyncOther;
+	}
+
+	/** Sync every signed-in account. One failing does not stop or delay the other. */
+	async sync(force: boolean): Promise<void> {
+		await Promise.all((["m365", "google"] as const).map((p) => this.syncProvider(p, force)));
 	}
 
 	/**
-	 * Fetch contacts from Microsoft 365 and replace the previously synced ones.
+	 * Fetch one account's contacts and replace what was synced from it before.
 	 * `force` syncs now; otherwise only when signed in and the interval has passed.
 	 */
-	sync(force: boolean): Promise<void> {
-		if (this.syncing) return this.syncing;
-		if (!this.auth.signedIn) return Promise.resolve();
-		const hours = this.settings.syncHours;
-		const due = !this.data.lastSync || (hours > 0 && Date.now() - this.data.lastSync >= hours * 3_600_000);
+	syncProvider(provider: Provider, force: boolean): Promise<void> {
+		const running = this.syncing[provider];
+		if (running) return running;
+		if (!this.isSignedIn(provider)) return Promise.resolve();
+		const s = this.settings;
+		if (!this.syncEnabled(provider)) return Promise.resolve();
+		const last = this.data.lastSync[provider];
+		const due = !last || (s.syncHours > 0 && Date.now() - last >= s.syncHours * 3_600_000);
 		if (!force && !due) return Promise.resolve();
-		if (!this.settings.syncContacts && !this.settings.syncPeople) return Promise.resolve();
 
-		this.syncing = (async () => {
+		const name = PROVIDER_NAMES[provider];
+		const generation = this.generation[provider];
+		const job = (async () => {
 			try {
-				const synced = await fetchFromMicrosoft(this.auth, {
-					contacts: this.settings.syncContacts,
-					people: this.settings.syncPeople,
-					peopleLimit: this.settings.peopleLimit,
-				});
-				this.data.contacts = replaceSynced(this.data.contacts, synced);
-				this.data.lastSync = Date.now();
-				this.lastSyncError = "";
+				let synced: Contact[];
+				let warning = "";
+				if (provider === "m365") {
+					synced = await fetchFromMicrosoft(this.auth, { contacts: s.syncContacts, people: s.syncPeople, peopleLimit: s.peopleLimit });
+				} else {
+					const result = await fetchFromGoogle(this.google, { contacts: s.googleSyncContacts, other: s.googleSyncOther });
+					synced = result.contacts;
+					warning = result.errors.join(" ");
+				}
+				// Signed out while this was running: drop the result.
+				if (generation !== this.generation[provider]) return;
+				this.data.synced[provider] = synced;
+				this.data.lastSync[provider] = Date.now();
+				this.lastSyncError[provider] = warning;
 				await this.saveSettings();
-				if (force) new Notice(`Contacts: ${synced.length} synced from Microsoft 365.`);
+				if (warning) new Notice(`${name}: ${synced.length} contacts synced, but part of the sync failed. ${warning}`);
+				else if (force) new Notice(`Contacts: ${synced.length} synced from ${name}.`);
 				this.refreshSettings();
 			} catch (err) {
-				this.lastSyncError = (err as Error).message;
-				console.error("Contact Links: sync failed", err);
+				const message = (err as Error).message;
+				this.lastSyncError[provider] = message;
+				console.error(`Contact Links: ${name} sync failed`, err);
 				// An expired session already showed its own notice.
-				if (force && !(err instanceof NotSignedInError && err.expired)) new Notice(`Contact sync failed: ${this.lastSyncError}`);
+				if (force && !(err instanceof NotSignedInError && err.expired)) new Notice(`${name} contact sync failed: ${message}`);
 			} finally {
-				this.syncing = null;
+				delete this.syncing[provider];
 			}
 		})();
-		return this.syncing;
+		this.syncing[provider] = job;
+		return job;
 	}
 
 	/** Re-render the settings tab if it is open, so counts and sign-in state stay current. */
@@ -182,8 +270,13 @@ export default class ContactLinksPlugin extends Plugin {
 	private saveSoon = debounce(() => void this.saveData(this.data), 2000, true);
 
 	recordUse(key: string): void {
-		this.data.usage[key] = (this.data.usage[key] ?? 0) + 1;
-		this.index.setUsage(this.data.usage);
+		// Count the pick for every copy of a merged contact, so it survives the merge changing.
+		const id = key.startsWith("contact:") ? key.slice("contact:".length) : "";
+		const contact = id ? this.merged.find((c) => c.id === id) : undefined;
+		for (const k of [key, ...(contact?.otherIds ?? []).map((other) => `contact:${other}`)]) {
+			this.data.usage[k] = (this.data.usage[k] ?? 0) + 1;
+		}
+		this.index.setUsage(mergedUsage(this.merged, this.data.usage));
 		this.saveSoon();
 	}
 
@@ -215,10 +308,11 @@ export default class ContactLinksPlugin extends Plugin {
 		input.click();
 	}
 
+	/** Remove the contacts imported from files. Synced contacts go when you sign out of their account. */
 	async clearContacts(): Promise<void> {
 		this.data.contacts = [];
 		await this.saveSettings();
-		new Notice("Imported contacts cleared. Person notes are kept.");
+		new Notice("Contacts imported from files cleared. Person notes are kept.");
 	}
 }
 

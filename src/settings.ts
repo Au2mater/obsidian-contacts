@@ -8,6 +8,13 @@ export interface ContactLinksSettings {
 	syncContacts: boolean;
 	syncPeople: boolean;
 	peopleLimit: number;
+	/** Google Cloud OAuth client (Desktop app). Its client secret is in secret storage, not here. */
+	googleClientId: string;
+	googleSyncContacts: boolean;
+	/** Google's "other contacts": people you emailed but never saved. */
+	googleSyncOther: boolean;
+	/** Also merge contacts with the same full name when their emails differ. */
+	mergeSameName: boolean;
 	/** Hours between automatic syncs; 0 turns automatic sync off. */
 	syncHours: number;
 	peopleFolder: string;
@@ -28,6 +35,10 @@ export const DEFAULT_SETTINGS: ContactLinksSettings = {
 	syncContacts: true,
 	syncPeople: true,
 	peopleLimit: 500,
+	googleClientId: "",
+	googleSyncContacts: true,
+	googleSyncOther: true,
+	mergeSameName: false,
 	syncHours: 12,
 	peopleFolder: "People",
 	createNotes: true,
@@ -65,14 +76,14 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem<Key>[] {
-		return [this.microsoft(), this.fileImport(), this.notes(), this.suggestions()];
+		return [this.microsoft(), this.googleGroup(), this.duplicates(), this.fileImport(), this.notes(), this.suggestions()];
 	}
 
 	private microsoft(): SettingDefinitionItem<Key> {
 		const { plugin } = this;
 		const { auth } = plugin;
-		const synced = () => plugin.data.contacts.filter((c) => c.source === "m365").length;
-		const last = () => (plugin.data.lastSync ? new Date(plugin.data.lastSync).toLocaleString() : "never");
+		const synced = () => plugin.data.synced.m365.length;
+		const last = () => lastSyncText(plugin.data.lastSync.m365);
 		return {
 			type: "group",
 			heading: "Microsoft 365",
@@ -92,7 +103,7 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 								.addButton((b) => b.setButtonText("Sign in").setCta().onClick(() => plugin.signIn()));
 							return;
 						}
-						const error = plugin.lastSyncError ? ` Last error: ${plugin.lastSyncError}` : "";
+						const error = plugin.lastSyncError.m365 ? ` Last error: ${plugin.lastSyncError.m365}` : "";
 						setting
 							.setName(`Signed in as ${auth.account || "Microsoft account"}`)
 							.setDesc(`${synced()} people synced. Last sync: ${last()}.${error}`)
@@ -102,13 +113,13 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 									.setCta()
 									.onClick(async () => {
 										b.setDisabled(true).setButtonText("Syncing…");
-										await plugin.sync(true);
+										await plugin.syncProvider("m365", true);
 										this.update();
 									}),
 							)
 							.addButton((b) =>
-								b.setButtonText("Sign out").onClick(() => {
-									plugin.signOut();
+								b.setButtonText("Sign out").onClick(async () => {
+									await plugin.signOut("m365");
 									this.update();
 								}),
 							);
@@ -130,8 +141,83 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 				},
 				{
 					name: "Sync every (hours)",
-					desc: "Automatic sync while Obsidian is open. 0 turns it off; Sync now and the command still work.",
+					desc: "Automatic sync of every signed-in account while Obsidian is open. 0 turns it off; Sync now and the command still work.",
 					control: { type: "number", key: "syncHours", min: 0, step: 1, placeholder: "12" },
+				},
+			],
+		};
+	}
+
+	private googleGroup(): SettingDefinitionItem<Key> {
+		const { plugin } = this;
+		const { google } = plugin;
+		return {
+			type: "group",
+			heading: "Google",
+			items: [
+				{
+					name: "Google account",
+					aliases: ["sign in", "gmail", "google contacts", "sync"],
+					render: (setting) => {
+						if (!google.signedIn) {
+							if (!google.canSignIn) {
+								setting
+									.setName("Not signed in")
+									.setDesc("Sign in to Google in Obsidian on desktop (1.13 or later). Contacts synced there reach this device with the vault.");
+								return;
+							}
+							setting
+								.setName("Not signed in")
+								.setDesc("Sign in to sync your Google contacts. Read-only.")
+								.addButton((b) => b.setButtonText("Sign in").setCta().onClick(() => plugin.signInGoogle()));
+							return;
+						}
+						const error = plugin.lastSyncError.google ? ` Last error: ${plugin.lastSyncError.google}` : "";
+						setting
+							.setName(`Signed in as ${google.account || "Google account"}`)
+							.setDesc(`${plugin.data.synced.google.length} people synced. Last sync: ${lastSyncText(plugin.data.lastSync.google)}.${error}`)
+							.addButton((b) =>
+								b
+									.setButtonText("Sync now")
+									.setCta()
+									.onClick(async () => {
+										b.setDisabled(true).setButtonText("Syncing…");
+										await plugin.syncProvider("google", true);
+										this.update();
+									}),
+							)
+							.addButton((b) =>
+								b.setButtonText("Sign out").onClick(async () => {
+									await plugin.signOut("google");
+									this.update();
+								}),
+							);
+					},
+				},
+				{
+					name: "Google saved contacts",
+					desc: "The contacts in your Google account.",
+					control: { type: "toggle", key: "googleSyncContacts" },
+				},
+				{
+					name: "Google other contacts",
+					desc: "People you have emailed in Gmail but not saved. Only those with a name are used.",
+					control: { type: "toggle", key: "googleSyncOther" },
+				},
+			],
+		};
+	}
+
+	private duplicates(): SettingDefinitionItem<Key> {
+		return {
+			type: "group",
+			heading: "Duplicates",
+			items: [
+				{
+					name: "Merge people with the same name",
+					desc: "Contacts that share an email address are always merged. On: also merge contacts with the same full name when their addresses differ, for example a work and a private address. No-reply and notification addresses are always left out.",
+					aliases: ["duplicates", "dedupe", "merge"],
+					control: { type: "toggle", key: "mergeSameName" },
 				},
 			],
 		};
@@ -147,13 +233,15 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 					name: "Contacts file",
 					aliases: ["csv", "vcard", "vcf", "import"],
 					render: (setting) => {
-						const count = plugin.data.contacts.filter((c) => c.source !== "m365").length;
+						const count = plugin.data.contacts.length;
+						const merged = plugin.beforeMerge - plugin.merged.length;
+						const dupes = merged > 0 ? ` ${plugin.merged.length} people in total from all sources, ${merged} duplicates merged.` : "";
 						setting
 							.setName("Contacts file")
-							.setDesc(`${count} imported from files. Export from Outlook as CSV or vCard (.vcf), then import it. Importing again updates existing contacts.`)
+							.setDesc(`${count} imported from files. Export from Outlook or Google as CSV or vCard (.vcf), then import it. Importing again updates existing contacts.${dupes}`)
 							.addButton((b) => b.setButtonText("Import file…").onClick(() => plugin.importFromFile(() => this.update())))
 							.addButton((b) =>
-								b.setButtonText("Clear all").onClick(async () => {
+								b.setButtonText("Clear imported").onClick(async () => {
 									await plugin.clearContacts();
 									this.update();
 								}),
@@ -219,4 +307,8 @@ export class ContactLinksSettingTab extends PluginSettingTab {
 			],
 		};
 	}
+}
+
+function lastSyncText(time: number | undefined): string {
+	return time ? new Date(time).toLocaleString() : "never";
 }

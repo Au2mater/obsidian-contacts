@@ -1,12 +1,12 @@
 # Contact Links
 
-An Obsidian plugin that turns your Microsoft 365 contacts into person links. It syncs your Outlook contacts and the people you work with, or imports a CSV or vCard file. As you type, the plugin suggests people, and picking one inserts a link. The first time you link someone, a minimal person note is created, so links, aliases and backlinks all work the way Obsidian normally does.
+An Obsidian plugin that turns your contacts into person links. It syncs from Microsoft 365 (your Outlook contacts and the people you work with), from Google (your Google contacts and the people you email in Gmail), or both, and it can import a CSV or vCard file. When the same person turns up in more than one place, the copies are merged into one suggestion. As you type, the plugin suggests people, and picking one inserts a link. The first time you link someone, a minimal person note is created, so links, aliases and backlinks all work the way Obsidian normally does.
 
 ## How it works
 
 | Goal | How |
 |---|---|
-| **Autocomplete** | Suggestions come from the imported contacts and the notes in your people folder. Typing `soren` finds "Søren", `sj` finds Søren Jensen, and nicknames and aliases match too. People you pick often rank higher. |
+| **Autocomplete** | Suggestions come from the synced and imported contacts and the notes in your people folder. Typing `soren` finds "Søren", `sj` finds Søren Jensen, and nicknames and aliases match too. People you pick often rank higher. |
 | **Aliases** | An Outlook nickname becomes an alias. Aliases you add yourself to a person note's `aliases:` are picked up automatically. If you type an alias, the link becomes `[[Full Name\|alias]]`. |
 | **Links** | The first time you pick someone, `People/Full Name.md` is created with only frontmatter (`aliases`, `email`, `company`, `role`). From then on the person is a real note, with graph node, backlinks and rename support. People you never mention never get a file. |
 
@@ -26,7 +26,7 @@ It syncs two sources, and you can turn either off:
 - **Saved contacts** (`/me/contacts`, permission `Contacts.Read`).
 - **People you work with** (`/me/people`, permission `People.Read`): colleagues and people you email, ranked by Microsoft by how much you work with them, 500 by default. The ranking also lifts them in suggestions.
 
-A sync runs shortly after Obsidian starts and then every 12 hours (you can change this). You can also use **Sync now** in settings or the command **Contact Links: Sync contacts from Microsoft 365**. Each sync replaces the previously synced contacts; contacts imported from files are kept.
+A sync runs shortly after Obsidian starts and then every 12 hours (you can change this). You can also use **Sync now** in settings or the command **Contact Links: Sync contacts now**, which syncs every account you're signed in to. Each sync replaces the contacts previously synced from that account; contacts from the other account and from files are kept. Signing out of an account removes the contacts synced from it; person notes are kept.
 
 ### Setup
 
@@ -36,20 +36,60 @@ A sync runs shortly after Obsidian starts and then every 12 hours (you can chang
 
 Each plugin keeps its own sign-in, so you sign in once here even if the other plugins are already signed in.
 
+## Syncing from Google
+
+The plugin signs in with your own Google Cloud OAuth client. Access is read-only. It syncs two sources, and you can turn either off:
+- **Saved contacts** (`people/me/connections`, scope `contacts.readonly`).
+- **Other contacts** (`otherContacts`, scope `contacts.other.readonly`): people you've emailed in Gmail but never saved. Only the ones with a name are used. If Google refuses one of the two lists (for example because a permission was left unticked when you signed in), the other is still synced and the settings show what failed.
+
+Signing in to Google works in Obsidian on **desktop only**. Google doesn't allow the contacts permissions in the code-on-another-device flow that Microsoft uses, so the browser returns to a short-lived listener on `127.0.0.1`. Contacts synced on desktop still reach your phone with the vault.
+
+### Setup
+
+1. In the [Google Cloud console](https://console.cloud.google.com), create a project (or use an existing one) and turn on the **People API** under **APIs & Services → Library**.
+2. Under **APIs & Services → OAuth consent screen**, set up the consent screen and add the scopes `contacts.readonly` and `contacts.other.readonly`.
+   - With a Google Workspace account, choose **Internal**.
+   - With a personal Gmail account, the user type is **External**. While the app is in **Testing**, add yourself as a test user. Google ends a Testing app's sign-ins after 7 days, so you'd have to sign in again each week. Publishing the app avoids that; without Google's verification you then click through an "unverified app" warning when you sign in, which is fine for your own use.
+3. Under **APIs & Services → Credentials → Create credentials → OAuth client ID**, choose **Desktop app**. Copy the client ID and the client secret.
+4. In Obsidian, go to **Settings → Contact Links → Google → Sign in**, enter the client ID and secret, select **Continue**, and allow access in the browser.
+
+The client secret and the session are kept in Obsidian's secret storage on your device, not in the vault.
+
+## Duplicates
+
+With more than one source, the same person often shows up twice. Contacts are merged when:
+- they share an email address (checked across all their addresses, ignoring case), or
+- one of them has no email and exactly one other person has the same name. Two people with the same name and different emails are merged only if you turn on **Merge people with the same name** (off by default); it's useful when someone appears with both a work and a private address.
+
+The merged contact keeps the name and nickname from the first source in this order: Microsoft 365, Google, files. Its email addresses are combined, company and job title come from the first source that has them, and the Microsoft relevance rank is kept. No-reply and notification senders (`noreply@`, `notifications@`, GitHub reply addresses and the like) are left out of every source.
+
+Merging happens only in memory: each account's contacts are stored as synced, so signing out or turning a source off never leaves half a merge behind.
+
 ## Importing from a file
 
-1. Export your contacts from Outlook:
+1. Export your contacts:
    - **Classic Outlook:** File → Open & Export → Import/Export → Export to a file → Comma Separated Values.
    - **New Outlook / Outlook on the web:** People → Manage contacts → Export contacts.
-2. In Obsidian, run the command **Contact Links: Import contacts from file**, or use the button under Settings → Contact Links.
+   - **Google Contacts:** Export → vCard.
+2. In Obsidian, run the command **Contact Links: Import contacts from file**, or use the button under Settings → Contact Links. **Clear imported** removes the contacts imported from files.
 
 Both CSV and vCard (`.vcf`) files work. That includes English and Danish column headers, comma or semicolon separators, UTF-8 or Windows ANSI encoding, and Outlook's vCard 2.1 quoted-printable format. Importing again updates contacts by email address; it doesn't create duplicates.
+
+## Contacts panel
+
+The contact icon in the ribbon, or the command **Contact Links: Open contacts panel**, opens a list of everyone the plugin knows in the right sidebar, with a search field that stays at the top. Each row shows where the person comes from (Microsoft, Google, File), whether they have a note, and their role, company and email.
+
+- Click someone with a note to open it (Ctrl/Cmd-click opens it in a new tab).
+- Click someone without a note to create one: you're asked to confirm first.
+- Right-click for **Open note** / **Create note…**, **Open in new tab** and **Copy email address**.
 
 ## Settings
 
 | Setting | Default |
 |---|---|
-| Sync saved contacts / people you work with | on / on (500 people) |
+| Microsoft 365: saved contacts / people you work with | on / on (500 people) |
+| Google: saved contacts / other contacts | on / on |
+| Merge people with the same name | off |
 | Sync every | 12 hours |
 | People folder | `People` |
 | Create a note on first mention | on |
@@ -62,7 +102,7 @@ Both CSV and vCard (`.vcf`) files work. That includes English and Danish column 
 
 ```bash
 npm install
-npm test          # unit tests for import, matching and trigger detection
+npm test          # unit tests for import, mapping, deduplication, matching and trigger detection
 npm run build     # type-check and bundle to main.js
 npm run dev       # rebuild on change
 ```
@@ -75,4 +115,4 @@ To install, copy `main.js`, `manifest.json` and `styles.css` into `<vault>/.obsi
 - The index is held in memory. It's rebuilt from the metadata cache only when contacts or people-folder notes change. Each keypress runs a regex and a linear scan over precomputed folded strings, which takes well under 1 ms for thousands of contacts.
 - Taking priority inside `[[` relies on Obsidian internals: the ordered `workspace.editorSuggest.suggests` list, where the first suggester to trigger wins. Tab to accept relies on the popover's `suggestions.useSelectedItem`. Both were checked against the Obsidian 1.15.1 app bundle. If a future version changes them, the `@` trigger keeps working, and Tab falls back to its normal behaviour.
 - Known limit: in plain-name mode, Enter makes a plain new line and doesn't continue a list bullet.
-- Only names, nicknames, emails, company, job title and relevance rank are stored, in the plugin's `data.json` in the vault. If your vault is in Git, consider ignoring that file. The Microsoft session is never stored in the vault.
+- Only names, nicknames, emails, company, job title and relevance rank are stored, in the plugin's `data.json` in the vault. If your vault is in Git, consider ignoring that file. The Microsoft and Google sessions and the Google client secret are never stored in the vault.
