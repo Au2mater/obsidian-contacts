@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-contact-links",
+  "version": "0.2.0",
+  "description": "Obsidian plugin: Outlook contacts as autocompleted person links",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "builtin-modules": "^5.5.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  },
+  "private": true
+}
