@@ -9,6 +9,9 @@ const ctx = await esbuild.context({
   external: ["obsidian", "electron", "@codemirror/*", "@lezer/*", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
   format: "cjs",
   target: "es2020",
+  // Obsidian runs plugins as CommonJS: turn import("http") into require("http"), which the
+  // desktop renderer provides, instead of an ES module import it cannot resolve.
+  supported: { "dynamic-import": false },
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,

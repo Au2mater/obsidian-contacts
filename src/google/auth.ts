@@ -5,7 +5,6 @@
 // Your own Google Cloud OAuth client (type "Desktop app"); the session and the client secret are
 // kept in Obsidian's secret storage on this device, outside the vault.
 import { App, Platform, requestUrl } from "obsidian";
-import type { AddressInfo } from "net";
 import { hashString, NotSignedInError } from "../m365/auth";
 
 /** Read-only: your saved contacts and the "other contacts" Gmail collects. */
@@ -114,10 +113,9 @@ export class GoogleAuth {
 		const state = randomString(24);
 		const challenge = await sha256Base64Url(verifier);
 
-		// Required here, on desktop only, so the plugin still loads on mobile, where Node modules do not exist.
-		// require rather than import(): esbuild leaves it as is, and Obsidian's renderer provides it.
+		// Loaded here, on desktop only, so the plugin still loads on mobile, where Node modules do not exist.
 		if (!Platform.isDesktop) throw new Error("Google sign-in works in Obsidian on desktop.");
-		const http = require("http") as typeof import("http");
+		const http = await import("http");
 		let finish: (result: { code?: string; error?: string }) => void = () => {};
 		const result = new Promise<{ code?: string; error?: string }>((resolve) => (finish = resolve));
 		const server = http.createServer((req, res) => {
@@ -144,7 +142,9 @@ export class GoogleAuth {
 				server.once("error", reject);
 				server.listen(0, "127.0.0.1", () => resolve());
 			});
-			const redirectUri = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("Could not start the local sign-in listener.");
+			const redirectUri = `http://127.0.0.1:${address.port}`;
 			const params = new URLSearchParams({
 				client_id: clientId,
 				redirect_uri: redirectUri,
